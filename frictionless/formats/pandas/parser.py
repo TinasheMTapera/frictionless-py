@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import math
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from dateutil.tz import tzoffset
@@ -55,7 +56,7 @@ class PandasParser(Parser):
                     value = pk[schema.primary_key.index(field.name)]  # type: ignore
                 else:
                     value = values[field.name]
-                if value is np.nan:
+                if isinstance(value, (float, np.floating)) and math.isnan(value):
                     value = None
                 elif isinstance(value, pd.Timestamp):
                     value = value.to_pydatetime()  # type: ignore

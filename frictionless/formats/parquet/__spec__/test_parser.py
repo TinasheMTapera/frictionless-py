@@ -1,9 +1,10 @@
 import datetime
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from frictionless import formats
+from frictionless import Package, formats
 from frictionless.resources import TableResource
 
 # Read
@@ -58,6 +59,44 @@ def test_parquet_parser_converts_each_row_once(tmp_path, mocker):
     report = resource.validate()
     assert report.valid
     assert to_dict.call_count == 2 * len(dataframe)
+
+
+def test_parquet_package_preserves_nulls_as_missing(tmp_path):
+    # Mixed wide tables box NaNs as distinct Python floats. Parquet nulls must
+    # remain missing when they pass through the pandas reader.
+    dataframe = pd.DataFrame(
+        {
+            "label": ["synthetic"] * 1200,
+            **{f"value_{column}": [-1.0] * 1200 for column in range(93)},
+        }
+    )
+    dataframe.loc[106, dataframe.columns[1:]] = np.nan
+    path = tmp_path / "nullable.parquet"
+    dataframe.to_parquet(path, index=False)
+    package = Package.from_descriptor(
+        {
+            "profile": "data-package",
+            "name": "nullable",
+            "resources": [
+                {
+                    "profile": "data-resource",
+                    "name": "nullable",
+                    "path": path.name,
+                    "format": "parquet",
+                }
+            ],
+        },
+        basepath=str(tmp_path),
+    )
+
+    report = package.validate()
+
+    assert report.valid, report.to_descriptor()
+    assert report.to_descriptor()["tasks"][0]["stats"]["rows"] == 1200
+    with package.get_table_resource("nullable") as resource:
+        rows = resource.read_rows()
+        assert all(rows[106][name] is None for name in dataframe.columns[1:])
+        assert all(rows[105][name] == -1 for name in dataframe.columns[1:])
 
 
 @pytest.mark.ci

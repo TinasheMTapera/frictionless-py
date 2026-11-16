@@ -54,9 +54,60 @@ def test_pandas_parser_with_nan():
     dataframe = pd.DataFrame(data={"x": [np.nan]})
 
     with TableResource(data=dataframe) as resource:
-        test_name = 'np.nan converted to Decimal("NaN")'
         row = resource.read_rows()[0]
-        assert row["x"].is_nan(), test_name
+        assert row["x"] is None
+
+
+@pytest.mark.parametrize("missing", [float("nan"), np.float32("nan"), np.float64("nan")])
+def test_pandas_parser_normalizes_boxed_nan(missing):
+    dataframe = pd.DataFrame({"value": pd.Series([missing], dtype=object)})
+    resource = TableResource(data=dataframe)
+
+    assert list(PandasParser(resource).read_cell_stream_create()) == [["value"], [None]]
+
+
+def test_pandas_parser_nan_normalization_preserves_other_values():
+    array = [1, float("nan")]
+    mapping = {"value": float("nan")}
+    ndarray = np.array([1.0, 2.0])
+    values = [1.5, float("inf"), float("-inf"), "nan", array, mapping, ndarray]
+    dataframe = pd.DataFrame({"value": pd.Series(values, dtype=object)})
+    resource = TableResource(data=dataframe)
+
+    cells = list(PandasParser(resource).read_cell_stream_create())
+
+    assert [row[0] for row in cells[1:5]] == values[:4]
+    assert all(row[0] is value for row, value in zip(cells[5:], values[4:]))
+
+
+@pytest.mark.parametrize("value", [1.5, "not-an-integer"])
+def test_pandas_parser_nan_fix_keeps_integer_type_errors(value):
+    schema = Schema.from_descriptor({"fields": [{"name": "value", "type": "integer"}]})
+    resource = TableResource(data=pd.DataFrame({"value": [value]}), schema=schema)
+
+    report = resource.validate()
+
+    assert not report.valid
+    assert "type-error" in report.flatten(["type"])[0]
+
+
+def test_pandas_parser_missing_numbers_still_fail_required_constraint():
+    schema = Schema.from_descriptor(
+        {
+            "fields": [
+                {"name": "label", "type": "string"},
+                {"name": "value", "type": "number", "constraints": {"required": True}},
+            ]
+        }
+    )
+    resource = TableResource(
+        data=pd.DataFrame({"label": ["present"], "value": [float("nan")]}), schema=schema
+    )
+
+    report = resource.validate()
+
+    assert not report.valid
+    assert report.flatten(["type"]) == [["constraint-error"]]
 
 
 def test_pandas_parser_from_dataframe_with_primary_key_having_datetime():
